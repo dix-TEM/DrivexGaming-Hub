@@ -1,0 +1,30 @@
+// Add this relation field inside model User:
+// resellerCustomers ResellerCustomer[] @relation("ResellerCustomers")
+
+model ResellerCustomer {
+  id String @id @default(cuid())
+
+  resellerId String
+  reseller   User @relation("ResellerCustomers", fields: [resellerId], references: [id], onDelete: Cascade)
+
+  name              String
+  phone             String?
+  email             String?
+  gameName          String?
+  gameUserId        String?
+  gameServerId      String?
+  gameCharacterName String?
+  notes             String?
+  archived          Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([resellerId])
+  @@index([archived])
+  @@index([phone])
+  @@index([email])
+  @@index([gameUserId])
+  @@index([resellerId, archived])
+  @@index([createdAt])
+}
