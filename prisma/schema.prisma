@@ -1,0 +1,454 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CONSUMER
+  RESELLER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum StockStatus {
+  IN_STOCK
+  OUT_OF_STOCK
+  LIMITED
+  PREORDER
+  DISABLED
+}
+
+enum DeliveryMethod {
+  MANUAL
+  INSTANT_CODE
+  SUPPLIER_API
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  REJECTED
+  REFUNDED
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAYMENT_REVIEW
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  FAILED
+  REFUNDED
+}
+
+enum DeliveryStatus {
+  NOT_STARTED
+  PENDING
+  PROCESSING
+  DELIVERED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum WalletTransactionType {
+  DEPOSIT
+  ORDER_DEDUCTION
+  REFUND
+  MANUAL_ADJUSTMENT
+  BONUS
+  COMMISSION
+}
+
+enum WalletTransactionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+  FAILED
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
+enum SupportTicketStatus {
+  OPEN
+  WAITING_FOR_USER
+  WAITING_FOR_ADMIN
+  RESOLVED
+  CLOSED
+}
+
+enum SupportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationType {
+  ORDER
+  PAYMENT
+  WALLET
+  PROMOTION
+  SUPPORT
+  SYSTEM
+}
+
+model User {
+  id             String     @id @default(cuid())
+  name           String
+  email          String     @unique
+  phone          String?    @unique
+  passwordHash   String
+  role           UserRole   @default(CONSUMER)
+  status         UserStatus @default(ACTIVE)
+  resellerTierId String?
+  resellerTier   ResellerTier? @relation(fields: [resellerTierId], references: [id], onDelete: SetNull)
+  walletBalance Decimal @default(0.00) @db.Decimal(18, 2)
+  referralCode String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consumerOrders Order[] @relation("ConsumerOrders")
+  resellerOrders Order[] @relation("ResellerOrders")
+  payments Payment[]
+  walletTransactions WalletTransaction[] @relation("WalletTransactionUser")
+  reviewedWalletTransactions WalletTransaction[] @relation("WalletTransactionReviewer")
+  reviewedPayments Payment[] @relation("PaymentReviewer")
+  supportTickets SupportTicket[]
+  supportMessages SupportMessage[]
+  auditLogs AuditLog[] @relation("AuditActor")
+  notifications Notification[]
+
+  @@index([role])
+  @@index([status])
+  @@index([resellerTierId])
+  @@index([createdAt])
+}
+
+model ResellerTier {
+  id                   String  @id @default(cuid())
+  name                 String  @unique
+  discountPercentage   Decimal @default(0.00) @db.Decimal(5, 2)
+  minimumMonthlyVolume Decimal @default(0.00) @db.Decimal(18, 2)
+  active               Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+  resellerPrices ProductResellerPrice[]
+
+  @@index([active])
+  @@index([minimumMonthlyVolume])
+}
+
+model Category {
+  id        String  @id @default(cuid())
+  name      String
+  slug      String  @unique
+  image     String?
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@index([active])
+  @@index([sortOrder])
+  @@index([active, sortOrder])
+}
+
+model Product {
+  id          String @id @default(cuid())
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name        String
+  slug        String @unique
+  gameName    String?
+  image       String?
+  description String?
+  consumerPrice Decimal @db.Decimal(18, 2)
+  supplierCost  Decimal @default(0.00) @db.Decimal(18, 2)
+  stockStatus           StockStatus    @default(IN_STOCK)
+  deliveryMethod        DeliveryMethod @default(MANUAL)
+  estimatedDeliveryTime String?
+  requiredFieldsJson Json?
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  resellerPrices ProductResellerPrice[]
+  orders Order[]
+
+  @@index([categoryId])
+  @@index([active])
+  @@index([stockStatus])
+  @@index([deliveryMethod])
+  @@index([sortOrder])
+  @@index([categoryId, active, sortOrder])
+}
+
+model ProductResellerPrice {
+  id             String @id @default(cuid())
+  productId      String
+  product        Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  resellerTierId String
+  resellerTier   ResellerTier @relation(fields: [resellerTierId], references: [id], onDelete: Cascade)
+  price Decimal @db.Decimal(18, 2)
+
+  @@unique([productId, resellerTierId])
+  @@index([productId])
+  @@index([resellerTierId])
+}
+
+model Order {
+  id          String @id @default(cuid())
+  orderNumber String @unique
+  userId String
+  user   User @relation("ConsumerOrders", fields: [userId], references: [id], onDelete: Restrict)
+  resellerId String?
+  reseller   User? @relation("ResellerOrders", fields: [resellerId], references: [id], onDelete: SetNull)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity Int @default(1)
+  unitPrice    Decimal @db.Decimal(18, 2)
+  totalPrice   Decimal @db.Decimal(18, 2)
+  supplierCost Decimal @default(0.00) @db.Decimal(18, 2)
+  grossProfit  Decimal @default(0.00) @db.Decimal(18, 2)
+  gameUserId        String?
+  gameServerId      String?
+  gameCharacterName String?
+  customerEmail     String?
+  customerPhone     String?
+  requiredFieldsJson Json?
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  paymentStatus PaymentStatus @default(UNPAID)
+  orderStatus   OrderStatus   @default(PENDING_PAYMENT)
+  deliveryStatus DeliveryStatus @default(NOT_STARTED)
+  customerNote    String?
+  internalNote    String?
+  proofOfDelivery String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+  supportTickets SupportTicket[]
+
+  @@index([orderNumber])
+  @@index([userId])
+  @@index([resellerId])
+  @@index([productId])
+  @@index([paymentMethodId])
+  @@index([paymentStatus])
+  @@index([orderStatus])
+  @@index([deliveryStatus])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([resellerId, createdAt])
+  @@index([paymentStatus, orderStatus])
+}
+
+model PaymentMethod {
+  id            String  @id @default(cuid())
+  name          String  @unique
+  instructions  String?
+  qrImage       String?
+  accountName   String?
+  accountNumber String?
+  active        Boolean @default(true)
+  sortOrder     Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[]
+  payments Payment[]
+
+  @@index([active])
+  @@index([sortOrder])
+  @@index([active, sortOrder])
+}
+
+model Payment {
+  id String @id @default(cuid())
+  orderId String
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  amount Decimal @db.Decimal(18, 2)
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  proofImage String?
+  status PaymentReviewStatus @default(PENDING)
+  reviewedBy String?
+  reviewer   User? @relation("PaymentReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  rejectionReason String?
+  createdAt  DateTime @default(now())
+  reviewedAt DateTime?
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([paymentMethodId])
+  @@index([status])
+  @@index([reviewedBy])
+  @@index([createdAt])
+  @@index([status, createdAt])
+}
+
+model WalletTransaction {
+  id String @id @default(cuid())
+  userId String
+  user   User @relation("WalletTransactionUser", fields: [userId], references: [id], onDelete: Restrict)
+  type WalletTransactionType
+  amount        Decimal @db.Decimal(18, 2)
+  balanceBefore Decimal @db.Decimal(18, 2)
+  balanceAfter  Decimal @db.Decimal(18, 2)
+  status WalletTransactionStatus @default(PENDING)
+  reference String?
+  proofImage String?
+  reviewedBy String?
+  reviewer   User? @relation("WalletTransactionReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  note String?
+  createdAt  DateTime @default(now())
+  reviewedAt DateTime?
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([reviewedBy])
+  @@index([reference])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([userId, status])
+  @@index([type, status])
+}
+
+model Supplier {
+  id          String  @id @default(cuid())
+  name        String
+  contactInfo Json?
+  notes       String?
+  active      Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+  @@index([name])
+}
+
+model PromoCode {
+  id String @id @default(cuid())
+  code String @unique
+  discountType  DiscountType
+  discountValue Decimal @db.Decimal(18, 2)
+  maxDiscount        Decimal? @db.Decimal(18, 2)
+  minimumOrderAmount Decimal? @db.Decimal(18, 2)
+  usageLimit   Int?
+  perUserLimit Int?
+  startsAt DateTime?
+  endsAt   DateTime?
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([code])
+  @@index([active])
+  @@index([startsAt])
+  @@index([endsAt])
+  @@index([active, startsAt, endsAt])
+}
+
+model SupportTicket {
+  id String @id @default(cuid())
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId String?
+  order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  subject String
+  status   SupportTicketStatus @default(OPEN)
+  priority SupportPriority     @default(MEDIUM)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages SupportMessage[]
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([status, priority])
+}
+
+model SupportMessage {
+  id String @id @default(cuid())
+  ticketId String
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId String
+  sender   User @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  message    String
+  attachment String?
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([senderId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+  actorId String?
+  actor   User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String
+  oldValueJson Json?
+  newValueJson Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([entityType, entityId])
+}
+
+model Notification {
+  id String @id @default(cuid())
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title   String
+  message String
+  type    NotificationType @default(SYSTEM)
+  read Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([read])
+  @@index([createdAt])
+  @@index([userId, read])
+}
